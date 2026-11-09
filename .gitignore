@@ -1,0 +1,46 @@
+# Unity-generated folders (rebuilt automatically from Assets/, Packages/ and ProjectSettings/)
+/[Ll]ibrary/
+/[Tt]emp/
+/[Oo]bj/
+/[Bb]uild/
+/[Bb]uilds/
+/[Ll]ogs/
+/[Uu]ser[Ss]ettings/
+/[Mm]emoryCaptures/
+/[Rr]ecordings/
+
+# Asset meta data should be tracked (it holds GUIDs). Do NOT ignore *.meta.
+
+# IDE / generated project files (Unity regenerates these)
+/.vs/
+/.idea/
+/.vscode/
+*.csproj
+*.unityproj
+*.sln
+*.slnx
+*.suo
+*.user
+*.userprefs
+*.pidb
+*.booproj
+
+# Build outputs
+*.apk
+*.aab
+*.unitypackage
+*.app
+
+# Crash logs and debug symbols
+sysinfo.txt
+crashlytics-build.properties
+*.pdb
+*.mdb
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Scratch scripts used for Editor automation
+/AgentScripts/

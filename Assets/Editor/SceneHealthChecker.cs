@@ -187,14 +187,26 @@ public class SceneHealthChecker : EditorWindow
                 Texture tex = material.GetTexture(slot);
                 if (tex == null || !seen.Add(tex)) continue;
 
+                // tex.width/height are the IMPORTED size (after the import Max Size is applied),
+                // so once a fix lowers Max Size, the next scan sees the smaller number.
                 int size = Mathf.Max(tex.width, tex.height);
                 if (size > _maxTextureSize)
+                {
+                    // Only a standalone texture file (png, jpg...) has a TextureImporter we can edit.
+                    // A texture embedded in a .glb belongs to the glTFast importer, which has no
+                    // max-size setting, so we can't fix it from here.
+                    string assetPath = AssetDatabase.GetAssetPath(tex);
+                    bool fixable = AssetImporter.GetAtPath(assetPath) is TextureImporter;
+                    int limit = _maxTextureSize; // copy: the lambda below must not see later edits
                     _issues.Add(new Issue
                     {
                         Target = go,
                         Category = "Big Texture",
                         Details = $"({tex.name} {tex.width}x{tex.height}, max {_maxTextureSize})"
+                            + (fixable ? "" : " embedded in model, re-export smaller"),
+                        Fix = fixable ? () => ClampTextureImportSize(assetPath, limit) : (Action)null
                     });
+                }
             }
         }
     }
@@ -237,6 +249,25 @@ public class SceneHealthChecker : EditorWindow
         Undo.RecordObject(light, "Disable Light Shadows");
         light.shadows = LightShadows.None;
         EditorSceneManager.MarkSceneDirty(light.gameObject.scene);
+    }
+
+    // Lowers the texture's Max Size import setting. The source file is untouched; Unity just
+    // re-imports it smaller. NOTE: importer changes are not part of Ctrl+Z; to undo, set the
+    // Max Size back in the texture's Inspector.
+    private static void ClampTextureImportSize(string assetPath, int limit)
+    {
+        var importer = AssetImporter.GetAtPath(assetPath) as TextureImporter;
+        if (importer == null) return;
+
+        // Max Size must be a power of two. Round the limit DOWN so we never end up over it
+        // (ClosestPowerOfTwo can round up, e.g. 1000 -> 1024).
+        int target = Mathf.ClosestPowerOfTwo(limit);
+        if (target > limit) target /= 2;
+        target = Mathf.Max(32, target);
+
+        if (importer.maxTextureSize <= target) return; // already small enough: nothing to do
+        importer.maxTextureSize = target;
+        importer.SaveAndReimport(); // apply it now, so the next scan sees the new size
     }
 
     private void FixSelected()

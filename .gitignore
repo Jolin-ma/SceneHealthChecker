@@ -44,3 +44,6 @@ desktop.ini
 
 # Scratch scripts used for Editor automation
 /AgentScripts/
+
+# Personal notes, kept local
+/InterviewNotes.md

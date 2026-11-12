@@ -1,14 +1,12 @@
-using System;
 using System.Collections.Generic;
 using UnityEditor;
-using UnityEditor.SceneManagement;
 using UnityEditor.UIElements;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEngine.UIElements;
 
 // Editor-only tool window that scans the open scene(s) for common mobile/XR performance problems.
-// Checks: missing scripts, meshes over a triangle budget, oversized textures,
+// Checks: meshes over a triangle budget, oversized textures,
 // realtime shadow-casting point/spot lights.
 public class SceneHealthChecker : EditorWindow
 {
@@ -19,7 +17,6 @@ public class SceneHealthChecker : EditorWindow
         public GameObject Target;
         public string Category;
         public string Details;
-        public Action Fix;      // null = no automatic fix exists for this issue
     }
 
     private readonly List<Issue> _issues = new List<Issue>();
@@ -30,8 +27,6 @@ public class SceneHealthChecker : EditorWindow
 
     private ListView _resultsList;
     private Label _summaryLabel;
-    private Button _fixSelectedButton;
-    private Button _fixAllButton;
 
     [MenuItem("Tools/Scene Health Checker")]
     public static void ShowWindow()
@@ -67,8 +62,7 @@ public class SceneHealthChecker : EditorWindow
             {
                 Issue issue = _issues[index];
                 string name = issue.Target == null ? "(deleted)" : GetPath(issue.Target.transform);
-                string fixTag = issue.Fix != null ? " [fixable]" : "";
-                ((Label)element).text = $"[{issue.Category}] {name}  {issue.Details}{fixTag}";
+                ((Label)element).text = $"[{issue.Category}] {name}  {issue.Details}";
             },
             selectionType = SelectionType.Single,
             fixedItemHeight = 18
@@ -76,17 +70,6 @@ public class SceneHealthChecker : EditorWindow
         _resultsList.style.flexGrow = 1;
         _resultsList.selectionChanged += OnRowSelected;
         rootVisualElement.Add(_resultsList);
-
-        // Fix buttons sit under the list. They start disabled until there's something to fix.
-        var fixRow = new VisualElement { style = { flexDirection = FlexDirection.Row } };
-        _fixSelectedButton = new Button(FixSelected) { text = "Fix Selected" };
-        _fixAllButton = new Button(FixAll) { text = "Fix All Fixable" };
-        _fixSelectedButton.style.flexGrow = 1;
-        _fixAllButton.style.flexGrow = 1;
-        fixRow.Add(_fixSelectedButton);
-        fixRow.Add(_fixAllButton);
-        rootVisualElement.Add(fixRow);
-        UpdateFixButtons();
     }
 
     // ---------- Scan ----------
@@ -107,7 +90,6 @@ public class SceneHealthChecker : EditorWindow
                 foreach (Transform t in root.GetComponentsInChildren<Transform>(true))
                 {
                     GameObject go = t.gameObject;
-                    CheckMissingScripts(go);
                     sceneTriangles += CheckTriangleBudget(go);
                     CheckTextures(go);
                     realtimeLights += CheckLight(go);
@@ -119,20 +101,6 @@ public class SceneHealthChecker : EditorWindow
             + $" Triangles: {sceneTriangles:N0}, realtime lights: {realtimeLights}";
 
         _resultsList.Rebuild();
-        UpdateFixButtons();
-    }
-
-    private void CheckMissingScripts(GameObject go)
-    {
-        int missing = GameObjectUtility.GetMonoBehavioursWithMissingScriptCount(go);
-        if (missing > 0)
-            _issues.Add(new Issue
-            {
-                Target = go,
-                Category = "Missing Script",
-                Details = $"({missing})",
-                Fix = () => RemoveMissingScripts(go)
-            });
     }
 
     // Returns this object's triangle count (so Scan can total the scene) and
@@ -187,24 +155,15 @@ public class SceneHealthChecker : EditorWindow
                 Texture tex = material.GetTexture(slot);
                 if (tex == null || !seen.Add(tex)) continue;
 
-                // tex.width/height are the IMPORTED size (after the import Max Size is applied),
-                // so once a fix lowers Max Size, the next scan sees the smaller number.
+                // tex.width/height are the IMPORTED size (after the import Max Size is applied).
                 int size = Mathf.Max(tex.width, tex.height);
                 if (size > _maxTextureSize)
                 {
-                    // Only a standalone texture file (png, jpg...) has a TextureImporter we can edit.
-                    // A texture embedded in a .glb belongs to the glTFast importer, which has no
-                    // max-size setting, so we can't fix it from here.
-                    string assetPath = AssetDatabase.GetAssetPath(tex);
-                    bool fixable = AssetImporter.GetAtPath(assetPath) is TextureImporter;
-                    int limit = _maxTextureSize; // copy: the lambda below must not see later edits
                     _issues.Add(new Issue
                     {
                         Target = go,
                         Category = "Big Texture",
                         Details = $"({tex.name} {tex.width}x{tex.height}, max {_maxTextureSize})"
-                            + (fixable ? "" : " embedded in model, re-export smaller"),
-                        Fix = fixable ? () => ClampTextureImportSize(assetPath, limit) : (Action)null
                     });
                 }
             }
@@ -225,78 +184,10 @@ public class SceneHealthChecker : EditorWindow
             {
                 Target = go,
                 Category = "Realtime Shadows",
-                Details = $"({light.type} light, {light.shadows})",
-                Fix = () => DisableShadows(light)
+                Details = $"({light.type} light, {light.shadows})"
             });
         }
         return 1;
-    }
-
-    // ---------- Fixes ----------
-
-    private static void RemoveMissingScripts(GameObject go)
-    {
-        // Register BEFORE changing, so Ctrl+Z can restore the object's previous state.
-        // Must be the FullObjectHierarchy variant: RegisterCompleteObjectUndo snapshots the
-        // GameObject's own fields but does not bring back a removed missing-script component.
-        Undo.RegisterFullObjectHierarchyUndo(go, "Remove Missing Scripts");
-        GameObjectUtility.RemoveMonoBehavioursWithMissingScript(go);
-        EditorSceneManager.MarkSceneDirty(go.scene); // so Unity asks to save the scene
-    }
-
-    private static void DisableShadows(Light light)
-    {
-        Undo.RecordObject(light, "Disable Light Shadows");
-        light.shadows = LightShadows.None;
-        EditorSceneManager.MarkSceneDirty(light.gameObject.scene);
-    }
-
-    // Lowers the texture's Max Size import setting. The source file is untouched; Unity just
-    // re-imports it smaller. NOTE: importer changes are not part of Ctrl+Z; to undo, set the
-    // Max Size back in the texture's Inspector.
-    private static void ClampTextureImportSize(string assetPath, int limit)
-    {
-        var importer = AssetImporter.GetAtPath(assetPath) as TextureImporter;
-        if (importer == null) return;
-
-        // Max Size must be a power of two. Round the limit DOWN so we never end up over it
-        // (ClosestPowerOfTwo can round up, e.g. 1000 -> 1024).
-        int target = Mathf.ClosestPowerOfTwo(limit);
-        if (target > limit) target /= 2;
-        target = Mathf.Max(32, target);
-
-        if (importer.maxTextureSize <= target) return; // already small enough: nothing to do
-        importer.maxTextureSize = target;
-        importer.SaveAndReimport(); // apply it now, so the next scan sees the new size
-    }
-
-    private void FixSelected()
-    {
-        int index = _resultsList.selectedIndex;
-        if (index < 0 || index >= _issues.Count || _issues[index].Fix == null) return;
-
-        _issues[index].Fix();
-        Scan(); // re-scan so the fixed row disappears
-    }
-
-    private void FixAll()
-    {
-        // Group every fix into ONE undo step, so a single Ctrl+Z reverts the whole batch.
-        Undo.IncrementCurrentGroup();
-        int group = Undo.GetCurrentGroup();
-        foreach (Issue issue in _issues)
-            if (issue.Fix != null && issue.Target != null) issue.Fix();
-        Undo.CollapseUndoOperations(group);
-        Undo.SetCurrentGroupName("Scene Health Fix All");
-        Scan();
-    }
-
-    private void UpdateFixButtons()
-    {
-        int index = _resultsList != null ? _resultsList.selectedIndex : -1;
-        bool selectedFixable = index >= 0 && index < _issues.Count && _issues[index].Fix != null;
-        _fixSelectedButton?.SetEnabled(selectedFixable);
-        _fixAllButton?.SetEnabled(_issues.Exists(i => i.Fix != null));
     }
 
     // ---------- Selection ----------
@@ -311,7 +202,6 @@ public class SceneHealthChecker : EditorWindow
                 EditorGUIUtility.PingObject(issue.Target);
             }
         }
-        UpdateFixButtons();
     }
 
     private static string GetPath(Transform t)

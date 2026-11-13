@@ -6,8 +6,7 @@ using UnityEngine.SceneManagement;
 using UnityEngine.UIElements;
 
 // Editor-only tool window that scans the open scene(s) for common mobile/XR performance problems.
-// Checks: meshes over a triangle budget, oversized textures,
-// realtime shadow-casting point/spot lights.
+// Checks: meshes over a triangle budget and oversized textures.
 public class SceneHealthChecker : EditorWindow
 {
     // One problem found by a scan. Every check produces these, so the list UI
@@ -78,7 +77,6 @@ public class SceneHealthChecker : EditorWindow
     {
         _issues.Clear();
         long sceneTriangles = 0;
-        int realtimeLights = 0;
 
         for (int i = 0; i < SceneManager.sceneCount; i++)
         {
@@ -92,13 +90,12 @@ public class SceneHealthChecker : EditorWindow
                     GameObject go = t.gameObject;
                     sceneTriangles += CheckTriangleBudget(go);
                     CheckTextures(go);
-                    realtimeLights += CheckLight(go);
                 }
             }
         }
 
         _summaryLabel.text = (_issues.Count == 0 ? "No issues found." : $"{_issues.Count} issue(s).")
-            + $" Triangles: {sceneTriangles:N0}, realtime lights: {realtimeLights}";
+            + $" Triangles: {sceneTriangles:N0}";
 
         _resultsList.Rebuild();
     }
@@ -168,26 +165,6 @@ public class SceneHealthChecker : EditorWindow
                 }
             }
         }
-    }
-
-    // Returns 1 if this object has an enabled realtime light (so Scan can count them).
-    // Realtime point/spot lights with shadows re-render the scene once per light (more for
-    // point lights, which need a cubemap), which is very expensive on mobile GPUs.
-    private int CheckLight(GameObject go)
-    {
-        if (!go.TryGetComponent(out Light light) || !light.enabled) return 0;
-        if (light.lightmapBakeType != LightmapBakeType.Realtime) return 0;
-
-        if (light.type != LightType.Directional && light.shadows != LightShadows.None)
-        {
-            _issues.Add(new Issue
-            {
-                Target = go,
-                Category = "Realtime Shadows",
-                Details = $"({light.type} light, {light.shadows})"
-            });
-        }
-        return 1;
     }
 
     // ---------- Selection ----------
